@@ -1,7 +1,7 @@
 import re
 from typing import Dict, Any
 
-from phonemizer.backend import EspeakBackend
+from espeak_phonemizer import Phonemizer
 from unidecode import unidecode
 
 from utils.text.numbers import normalize_numbers
@@ -70,16 +70,12 @@ class Cleaner:
         self.use_phonemes = use_phonemes
         self.lang = lang
         if use_phonemes:
-            self.backend = EspeakBackend(language=lang,
-                                         preserve_punctuation=True,
-                                         with_stress=False,
-                                         punctuation_marks=';:,.!?¡¿—…"«»“”()',
-                                         language_switch='remove-flags')
+            self.backend = Phonemizer(default_voice=lang)
 
     def __call__(self, text: str) -> str:
         text = self.clean_func(text)
         if self.use_phonemes:
-            text = self.backend.phonemize([text], strip=True)[0]
+            text = self.backend.phonemize(text, no_stress=True, keep_clause_breakers=True, keep_language_flags=False)
             text = ''.join([p for p in text if p in phonemes_set])
         text = collapse_whitespace(text)
         text = text.strip()
