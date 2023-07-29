@@ -1,32 +1,34 @@
 import warnings
+# Ignore future warnings by librosa in resemblyzer
 from collections import Counter
-from random import Random
+from typing import Tuple
 
+import numpy as np
 from tabulate import tabulate
-from torch.utils.data import Dataset, DataLoader
 
-from utils.dsptorchaudio import DSPTorchaudio
 from utils.text.recipes import read_metadata
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-import tqdm
 import argparse
 import traceback
 from dataclasses import dataclass
-from multiprocessing import cpu_count
+from multiprocessing import Pool, cpu_count
+from random import Random
 
+import tqdm
 import torch
 from resemblyzer import VoiceEncoder
+from resemblyzer import preprocess_wav as preprocess_resemblyzer
 
-from pitch_extraction.pitch_extractor import new_pitch_extractor_from_config
+from pitch_extraction.pitch_extractor import PitchExtractor, new_pitch_extractor_from_config
 from utils.display import *
 from utils.dsp import *
-from utils.files import get_files, read_config, pickle_binary
+from utils.files import get_files, pickle_binary, read_config
 from utils.paths import Paths
 from utils.text.cleaners import Cleaner
 
-import copy
+
 SPEAKER_EMB_DIM = 256  # fixed speaker dim from VoiceEncoder
 
 
@@ -40,55 +42,61 @@ def valid_n_workers(num):
 @dataclass
 class DataPoint:
     item_id: str
+    mel_len: int
     text: str
+    mel: np.array
     pitch: np.array
-    raw_wav: np.array
-    processed_wav: np.array
+    reference_wav: np.array
 
 
-class TTSDataset(Dataset):
-    def __init__(self, data):
-        self.data = data
+class Preprocessor:
 
-    def __len__(self):
-        return len(self.data)
+    def __init__(self,
+                 paths: Paths,
+                 text_dict: Dict[str, str],
+                 cleaner: Cleaner,
+                 dsp: DSP,
+                 pitch_extractor: PitchExtractor,
+                 lang: str) -> None:
+        self.paths = paths
+        self.text_dict = text_dict
+        self.cleaner = cleaner
+        self.lang = lang
+        self.dsp = dsp
+        self.pitch_extractor = pitch_extractor
 
-    def __getitem__(self, idx):
-        return self.data[idx]
+    def __call__(self, id_path: Tuple[str, Path]) -> Union[DataPoint, None]:
+        item_id, path = id_path
+        try:
+            dp = self._convert_file(item_id, path)
+            np.save(self.paths.mel/f'{dp.item_id}.npy', dp.mel, allow_pickle=False)
+            np.save(self.paths.raw_pitch/f'{dp.item_id}.npy', dp.pitch, allow_pickle=False)
+            return dp
+        except Exception as e:
+            print(traceback.format_exc())
+            return None
 
-
-def prepare_processing_batch(batch, dsp, text_dict, cleaner, pitch_extractor):
-    batch_data_points = []
-
-    for item_id, path in batch:
-        y = dsp.load_wav(path)
-
-        # used later for embedding extraction
-        raw_wav = copy.deepcopy(y)
-
-        if dsp.should_trim_long_silences:
-            y = dsp.trim_long_silences(y)
-        if dsp.should_trim_start_end_silence:
-            y = dsp.trim_silence(y)
-
-        peak = torch.abs(y).max()
-        if dsp.should_peak_norm or peak > 1.0:
+    def _convert_file(self, item_id: str, path: Path) -> DataPoint:
+        y = self.dsp.load_wav(path)
+        reference_wav = preprocess_resemblyzer(y, source_sr=self.dsp.sample_rate)
+        if self.dsp.should_trim_long_silences:
+            y = self.dsp.trim_long_silences(y)
+        if self.dsp.should_trim_start_end_silence:
+            y = self.dsp.trim_silence(y)
+        peak = np.abs(y).max()
+        if self.dsp.should_peak_norm or peak > 1.0:
             y /= peak
             y = y * 0.95
-
-        pitch = pitch_extractor(y).astype(np.float32)
-
-        dp = DataPoint(
-            item_id=item_id,
-            text=cleaner(text_dict[item_id]),
-            pitch=pitch,
-            raw_wav=raw_wav,
-            processed_wav=y
-        )
-
-        batch_data_points.append(dp)
-
-    return batch_data_points
+        mel = self.dsp.wav_to_mel(y)
+        pitch = self.pitch_extractor(y)
+        text = self.text_dict[item_id]
+        text = self.cleaner(text)
+        return DataPoint(item_id=item_id,
+                         mel=mel.astype(np.float32),
+                         mel_len=mel.shape[-1],
+                         text=text,
+                         pitch=pitch.astype(np.float32),
+                         reference_wav=reference_wav)
 
 
 parser = argparse.ArgumentParser(description='Dataset preprocessing')
@@ -97,10 +105,8 @@ parser.add_argument('--config', metavar='FILE', default='configs/multispeaker.ya
                     help='The config containing all hyperparams.')
 parser.add_argument('--metafile', '-m', default='metadata_train.csv',
                     help='name of the metafile in the dataset dir')
-parser.add_argument('--batch_size', '-b', metavar='N', type=int,
-                    default=16, help='Batch size for preprocessing')
 parser.add_argument('--num_workers', '-w', metavar='N', type=valid_n_workers,
-                    default=cpu_count()-1, help='The number of worker threads to use for preprocessing')
+                    default=3, help='The number of worker threads to use for preprocessing')
 args = parser.parse_args()
 
 
@@ -112,7 +118,6 @@ if __name__ == '__main__':
     audio_ids = set(file_id_to_audio.keys())
     paths = Paths(config['data_path'], config['tts_model_id'])
     n_workers = max(1, args.num_workers)
-    batch_size = args.batch_size
 
     print(f'\nFound {len(audio_files)} {audio_format} files in "{args.path}".')
     assert len(audio_files) > 0, f'Found no {audio_format} files in {args.path}, exiting.'
@@ -137,19 +142,12 @@ if __name__ == '__main__':
     table = [(speaker, count) for speaker, count in speaker_counts.most_common()]
     print(tabulate(table, headers=('speaker', 'count')))
 
+    dsp = DSP.from_config(config)
     nval = config['preprocessing']['n_val']
+
     if nval > len(file_id_to_audio):
         nval = len(file_id_to_audio) // 5
         print(f'\nWARNING: Using nval={nval} since the preset nval exceeds number of training files.')
-
-    file_id_audio_list = list(file_id_to_audio.items())
-    successful_ids = set()
-
-    dataset = []
-    cleaned_texts = []
-    cleaner = Cleaner.from_config(config)
-    pitch_extractor = new_pitch_extractor_from_config(config)
-    dsp = DSPTorchaudio.from_config(config)
 
     simple_table([
         ('Sample Rate', dsp.sample_rate),
@@ -159,49 +157,35 @@ if __name__ == '__main__':
         ('Pitch Extraction', config['preprocessing']['pitch_extractor'])
     ])
 
+    pool = Pool(processes=n_workers)
+    dataset = []
+    cleaned_texts = []
+    cleaner = Cleaner.from_config(config)
+    pitch_extractor = new_pitch_extractor_from_config(config)
+
+    preprocessor = Preprocessor(paths=paths,
+                                text_dict=text_dict,
+                                dsp=dsp,
+                                pitch_extractor=pitch_extractor,
+                                cleaner=cleaner,
+                                lang=config['preprocessing']['language'])
+
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     voice_encoder = VoiceEncoder().to(device)
+    file_id_audio_list = list(file_id_to_audio.items())
+    successful_ids = set()
 
-    # run processing
-    start_time = time.monotonic()
-
-    # Prepare processing
-    tts_dataset = TTSDataset(file_id_audio_list)
-    dataloader = DataLoader(tts_dataset,
-                            num_workers=n_workers,
-                            batch_size=batch_size,
-                            collate_fn=lambda batch: prepare_processing_batch(batch, dsp, text_dict, cleaner, pitch_extractor))
-
-    # Process the dataset
-    for batch in dataloader:
-        # calculate mel spectrograms in a batch
-        processed_wavs = [dp.processed_wav for dp in batch]
-        mels = dsp.waveform_to_mel_batched(processed_wavs)
-
-        # adjust volume in a batch
-        raw_wavs = [dp.raw_wav for dp in batch]
-        sound_adjusted = dsp.adjust_volume_batched(raw_wavs)
-
-        # iterate over batch to perform non-batched computations and writing results
-        for index, dp in enumerate(batch):
-            if dp is not None and dp.item_id in text_dict:
-                try:
-                    mel = mels[index].cpu().numpy()
-                    np.save(paths.mel / f'{dp.item_id}.npy', mel, allow_pickle=False)
-                    np.save(paths.raw_pitch / f'{dp.item_id}.npy', dp.pitch, allow_pickle=False)
-
-                    emb = voice_encoder.embed_utterance(dp.processed_wav.cpu().numpy().squeeze())
-                    np.save(paths.speaker_emb / f'{dp.item_id}.npy', emb, allow_pickle=False)
-
-                    dataset += [(dp.item_id, mel.shape[-1])]
-                    cleaned_texts += [(dp.item_id, dp.text)]
-                    successful_ids.add(dp.item_id)
-                except Exception as e:
-                    print(traceback.format_exc())
-
-    end_time = time.monotonic()
-    elapsed_time = end_time - start_time
-    print(f"Execution time: {elapsed_time} seconds")
+    for i, dp in tqdm.tqdm(enumerate(pool.imap_unordered(preprocessor, file_id_audio_list), 1),
+                           total=len(audio_files), smoothing=0.1):
+        if dp is not None and dp.item_id in text_dict:
+            try:
+                emb = voice_encoder.embed_utterance(dp.reference_wav)
+                np.save(paths.speaker_emb / f'{dp.item_id}.npy', emb, allow_pickle=False)
+                dataset += [(dp.item_id, dp.mel_len)]
+                cleaned_texts += [(dp.item_id, dp.text)]
+                successful_ids.add(dp.item_id)
+            except Exception as e:
+                print(traceback.format_exc())
 
     # filter according to successfully preprocessed datapoints
     text_dict = {k: v for k, v in text_dict.items() if k in successful_ids}

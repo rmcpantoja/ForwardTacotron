@@ -1,9 +1,12 @@
 from abc import ABC
 from enum import Enum
-from typing import Dict, Any
+from typing import Dict, Any, Union
 
 import librosa
 import numpy as np
+import torchaudio.functional as F
+import torch
+
 try:
     import pyworld as pw
 except ImportError as e:
@@ -13,6 +16,7 @@ except ImportError as e:
 class PitchExtractionMethod(Enum):
     LIBROSA = 'librosa'
     PYWORLD = 'pyworld'
+    TORCHAUDIO = 'torchaudio'
 
 
 class PitchExtractor(ABC):
@@ -36,7 +40,9 @@ class LibrosaPitchExtractor(PitchExtractor):
         self.frame_length = frame_length
         self.hop_length = hop_length
 
-    def __call__(self, wav: np.array) -> np.array:
+    def __call__(self, wav: Union[torch.Tensor, np.array]) -> np.array:
+        if torch.is_tensor(wav):
+            wav = wav.numpy().squeeze()
         pitch, _, _ = librosa.pyin(wav,
                                    fmin=self.fmin,
                                    fmax=self.fmax,
@@ -52,13 +58,34 @@ class PyworldPitchExtractor(PitchExtractor):
     def __init__(self,
                  sample_rate: int,
                  hop_length: int) -> None:
-
         self.sample_rate = sample_rate
         self.hop_length = hop_length
 
-    def __call__(self, wav: np.array) -> np.array:
+    def __call__(self, wav: Union[torch.Tensor, np.array]) -> np.array:
+        if torch.is_tensor(wav):
+            wav = wav.numpy().squeeze()
         return pw.dio(wav.astype(np.float64), self.sample_rate,
                       frame_period=self.hop_length / self.sample_rate * 1000)[0]
+
+
+class TorchAudioPitchExtractor(PitchExtractor):
+
+    def __init__(self,
+                 sample_rate: int,
+                 hop_length: int,
+                 freq_min: int,
+                 freq_max: int) -> None:
+        self.sample_rate = sample_rate
+        self.hop_length = hop_length
+        self.freq_min = freq_min
+        self.freq_max = freq_max
+
+    def __call__(self, wav: np.array) -> np.array:
+        return F.detect_pitch_frequency(waveform=wav,
+                                        sample_rate=self.sample_rate,
+                                        frame_time=self.hop_length / self.sample_rate,
+                                        freq_low=self.freq_min,
+                                        freq_high=self.freq_max)
 
 
 def new_pitch_extractor_from_config(config: Dict[str, Any]) -> PitchExtractor:
@@ -73,6 +100,11 @@ def new_pitch_extractor_from_config(config: Dict[str, Any]) -> PitchExtractor:
     elif pitch_extractor_type == 'pyworld':
         pitch_extractor = PyworldPitchExtractor(hop_length=config['dsp']['hop_length'],
                                                 sample_rate=config['dsp']['sample_rate'])
+    elif pitch_extractor_type == 'torchaudio':
+        pitch_extractor = TorchAudioPitchExtractor(freq_min=preproc_config['pitch_min_freq'],
+                                                   freq_max=preproc_config['pitch_max_freq'],
+                                                   hop_length=config['dsp']['hop_length'],
+                                                   sample_rate=config['dsp']['sample_rate'])
     else:
         raise ValueError(f'Invalid pitch extractor type: {pitch_extractor_type}, choices: [librosa, pyworld].')
     return pitch_extractor
