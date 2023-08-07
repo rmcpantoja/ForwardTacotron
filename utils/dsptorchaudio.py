@@ -1,6 +1,6 @@
 import struct
 from pathlib import Path
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, List
 import numpy as np
 import librosa
 import torch
@@ -86,7 +86,6 @@ class DSPTorchaudio:
 
     def load_wav(self, path: Union[str, Path], mono: bool = True) -> torch.Tensor:
         """Load audio file into a tensor"""
-
         effects = []
         metadata = torchaudio.info(path)
 
@@ -113,7 +112,7 @@ class DSPTorchaudio:
         """Adjust volume of the waveform"""
         return self.volume_transform(waveform)
 
-    def adjust_volume_batched(self, data):
+    def adjust_volume_batched(self, data: List[torch.Tensor]) -> List[torch.Tensor]:
         """Adjust volume of the waveforms in the batch"""
         lengths = [tensor.size(1) for tensor in data]
         padded_batch = [torch.nn.functional.pad(x, (0, max(lengths) - x.size(1))) for x in data]
@@ -178,8 +177,11 @@ class DSPTorchaudio:
 
     def trim_silence(self, waveform: np.array) -> torch.Tensor:
         """Trim silence from the waveform"""
-        trimmed_waveform = librosa.effects.trim(waveform, top_db=self.trim_silence_top_db, frame_length=2048, hop_length=512)[0]
-        trimmed_waveform = torch.from_numpy(trimmed_waveform)
+        trimmed_waveform = librosa.effects.trim(waveform,
+                                                top_db=self.trim_silence_top_db,
+                                                frame_length=self.win_length,
+                                                hop_length=self.hop_length)
+        trimmed_waveform = torch.from_numpy(trimmed_waveform[0])
         trimmed_waveform = torch.unsqueeze(trimmed_waveform, 0)
         return trimmed_waveform
 
