@@ -71,6 +71,10 @@ def prepare_processing_batch(batch, dsp, text_dict, cleaner, pitch_extractor):
         if dsp.should_trim_start_end_silence:
             y = dsp.trim_silence(y)
 
+        if y.shape[-1] == 0:
+            print(f'Skipping {item_id} because of the zero length')
+            continue
+
         peak = torch.abs(y).max()
         if dsp.should_peak_norm or peak > 1.0:
             y /= peak
@@ -98,7 +102,7 @@ parser.add_argument('--config', metavar='FILE', default='configs/multispeaker.ya
 parser.add_argument('--metafile', '-m', default='metadata_train.csv',
                     help='name of the metafile in the dataset dir')
 parser.add_argument('--batch_size', '-b', metavar='N', type=int,
-                    default=16, help='Batch size for preprocessing')
+                    default=32, help='Batch size for preprocessing')
 parser.add_argument('--num_workers', '-w', metavar='N', type=valid_n_workers,
                     default=cpu_count()-1, help='The number of worker threads to use for preprocessing')
 args = parser.parse_args()
