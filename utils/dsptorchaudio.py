@@ -146,6 +146,8 @@ class DSPTorchaudio:
             mel = torch.unsqueeze(mel, 0)
             mel = mel.to(self.device)
 
+        mel = self.denormalize(mel)
+
         inverse_melscale_transform = transforms.InverseMelScale(
             n_stft=self.n_fft//2 + 1,
             sample_rate=self.sample_rate,
