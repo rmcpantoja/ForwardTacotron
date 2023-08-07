@@ -186,7 +186,7 @@ if __name__ == '__main__':
         for index, dp in enumerate(batch):
             if dp is not None and dp.item_id in text_dict:
                 try:
-                    mel = mels[index].cpu().numpy()
+                    mel = mels[index].cpu().numpy().squeeze()
                     np.save(paths.mel / f'{dp.item_id}.npy', mel, allow_pickle=False)
                     np.save(paths.raw_pitch / f'{dp.item_id}.npy', dp.pitch, allow_pickle=False)
 

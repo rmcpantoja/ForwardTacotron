@@ -70,16 +70,16 @@ class DSPTorchaudio:
     def init_mel_transform(self):
         """Initialize mel transformation"""
         mel_transform = transforms.MelSpectrogram(
-            sample_rate=22050,
-            n_fft=1024,
-            win_length=1024,
-            hop_length=256,
+            sample_rate=self.sample_rate,
+            n_fft=self.n_fft,
+            win_length=self.win_length,
+            hop_length=self.hop_length,
+            power=1,
             norm="slaney",
-            n_mels=80,
+            n_mels=self.n_mels,
             mel_scale="slaney",
-            f_min=0,
-            f_max=8000,
-            normalized=True
+            f_min=self.fmin,
+            f_max=self.fmax,
         ).to(self.device)
 
         return mel_transform
@@ -132,9 +132,12 @@ class DSPTorchaudio:
         list_of_mels = [mel[:, :, :expected_mel_lengths[index]] for index, mel in enumerate(mels)]
         return list_of_mels
 
-    def waveform_to_mel(self, waveform: torch.Tensor, normalize=True) -> np.array:
+    def waveform_to_mel(self, waveform: torch.Tensor, normalized=True) -> torch.Tensor:
         """Convert waveform to mel spectrogram"""
-        return self.mel_transform(waveform)
+        mel_spec = self.mel_transform(waveform)
+        if normalized:
+            mel_spec = self.normalize(mel_spec)
+        return mel_spec
 
     def griffinlim(self, mel: Union[np.array, torch.Tensor], n_iter=32) -> np.array:
         """Convert mel spectrogram to waveform using Griffin-Lim algorithm"""
