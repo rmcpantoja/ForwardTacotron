@@ -5,7 +5,7 @@ from random import Random
 from tabulate import tabulate
 from torch.utils.data import Dataset, DataLoader
 
-from utils.dsptorchaudio import DSPTorchaudio
+from utils.dsp import DSP
 from utils.text.recipes import read_metadata
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -153,7 +153,7 @@ if __name__ == '__main__':
     cleaned_texts = []
     cleaner = Cleaner.from_config(config)
     pitch_extractor = new_pitch_extractor_from_config(config)
-    dsp = DSPTorchaudio.from_config(config)
+    dsp = DSP.from_config(config)
 
     simple_table([
         ('Sample Rate', dsp.sample_rate),
