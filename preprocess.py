@@ -177,7 +177,7 @@ if __name__ == '__main__':
                             collate_fn=lambda batch: prepare_processing_batch(batch, dsp, text_dict, cleaner, pitch_extractor))
 
     # Process the dataset
-    for batch in dataloader:
+    for batch in tqdm.tqdm(dataloader):
         # calculate mel spectrograms in a batch
         processed_wavs = [dp.processed_wav for dp in batch]
         mels = dsp.waveform_to_mel_batched(processed_wavs)
