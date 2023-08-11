@@ -138,42 +138,30 @@ class DSP:
             mel_spec = self.normalize(mel_spec)
         return mel_spec
 
-    def griffinlim(self, mel: Union[np.array, torch.Tensor], n_iter=32) -> np.array:
-        """Convert mel spectrogram to waveform using Griffin-Lim algorithm"""
-        if not torch.is_tensor(mel):
-            mel = torch.from_numpy(mel)
-            mel = torch.unsqueeze(mel, 0)
-            mel = mel.to(self.device)
-
+    def griffinlim(self, mel: np.array, n_iter=32) -> np.array:
         mel = self.denormalize(mel)
-
-        inverse_melscale_transform = transforms.InverseMelScale(
-            n_stft=self.n_fft//2 + 1,
-            sample_rate=self.sample_rate,
-            f_min=self.fmin,
-            f_max=self.fmax,
-            mel_scale="slaney"
-        )
-
-        griffin_lim = transforms.GriffinLim(
-            n_fft=self.n_fft,
+        S = librosa.feature.inverse.mel_to_stft(
+            mel,
             power=1,
+            sr=self.sample_rate,
+            n_fft=self.n_fft,
+            fmin=self.fmin,
+            fmax=self.fmax)
+        wav = librosa.core.griffinlim(
+            S,
             n_iter=n_iter,
-            win_length=self.win_length,
-            hop_length=self.hop_length
-        )
-
-        waveform = griffin_lim(inverse_melscale_transform(mel))
-        return waveform.numpy().squeeze(0)
+            hop_length=self.hop_length,
+            win_length=self.win_length)
+        return wav
 
     def normalize(self, mel: torch.Tensor) -> torch.Tensor:
         """Normalize mel spectrogram"""
         mel = torch.clip(mel, min=1.e-5, max=None)
         return torch.log(mel)
 
-    def denormalize(self, mel: torch.Tensor) -> torch.Tensor:
+    def denormalize(self, mel: np.ndarray) -> np.ndarray:
         """Denormalize mel spectrogram"""
-        return torch.exp(mel)
+        return np.exp(mel)
 
     def trim_silence(self, waveform: np.array) -> torch.Tensor:
         """Trim silence from the waveform"""
