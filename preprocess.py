@@ -44,46 +44,51 @@ def prepare_processing_batch(batch: List[Tuple[str, Path]], dsp: DSP, text_dict:
     batch_data_points = []
 
     for item_id, path in batch:
-        y = dsp.load_wav(path)
+        try:
+            y = dsp.load_wav(path)
 
-        # used later for embedding extraction
-        raw_wav = copy.deepcopy(y)
+            # used later for embedding extraction
+            raw_wav = copy.deepcopy(y)
 
-        if dsp.should_trim_long_silences:
-            y = dsp.trim_long_silences(y)
-        if dsp.should_trim_start_end_silence:
-            y = dsp.trim_silence(y)
+            if dsp.should_trim_long_silences:
+                y = dsp.trim_long_silences(y)
+            if dsp.should_trim_start_end_silence:
+                y = dsp.trim_silence(y)
 
-        if y.shape[-1] == 0:
-            print(f'Skipping {item_id} because of the zero length')
+            if y.shape[-1] == 0:
+                print(f'Skipping {item_id} because of the zero length')
+                continue
+
+            peak = torch.abs(y).max()
+            if dsp.should_peak_norm or peak > 1.0:
+                y /= peak
+                y = y * 0.95
+
+            pitch = pitch_extractor(y).astype(np.float32)
+            cleaned_text = cleaner(text_dict[item_id])
+
+            dp = PreprocessingDataPoint(
+                item_id=item_id,
+                text=cleaned_text,
+                pitch=pitch,
+                raw_wav=raw_wav,
+                processed_wav=y
+            )
+
+            batch_data_points.append(dp)
+        except Exception as e:
+            print(f'Error processing {item_id}: {e}')
+            print(traceback.format_exc())
             continue
-
-        peak = torch.abs(y).max()
-        if dsp.should_peak_norm or peak > 1.0:
-            y /= peak
-            y = y * 0.95
-
-        pitch = pitch_extractor(y).astype(np.float32)
-        cleaned_text = cleaner(text_dict[item_id])
-
-        dp = PreprocessingDataPoint(
-            item_id=item_id,
-            text=cleaned_text,
-            pitch=pitch,
-            raw_wav=raw_wav,
-            processed_wav=y
-        )
-
-        batch_data_points.append(dp)
 
     return batch_data_points
 
 
 parser = argparse.ArgumentParser(description='Dataset preprocessing')
 parser.add_argument('--path', '-p', help='directly point to dataset')
-parser.add_argument('--config', metavar='FILE', default='configs/multispeaker.yaml',
+parser.add_argument('--config', metavar='FILE', default='configs/singlespeaker.yaml',
                     help='The config containing all hyperparams.')
-parser.add_argument('--metafile', '-m', default='metadata_train.csv',
+parser.add_argument('--metafile', '-m', default='metadata.csv',
                     help='name of the metafile in the dataset dir')
 parser.add_argument('--batch_size', '-b', metavar='N', type=int,
                     default=32, help='Batch size for preprocessing')
