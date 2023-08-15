@@ -4,6 +4,7 @@ from random import Random
 
 from tabulate import tabulate
 from torch.utils.data import Dataset, DataLoader
+from typing import Tuple
 
 from utils.dsp import DSP
 from utils.text.recipes import read_metadata
@@ -19,7 +20,7 @@ from multiprocessing import cpu_count
 import torch
 from resemblyzer import VoiceEncoder
 
-from pitch_extraction.pitch_extractor import new_pitch_extractor_from_config
+from pitch_extraction.pitch_extractor import new_pitch_extractor_from_config, PitchExtractor
 from utils.display import *
 from utils.dsp import *
 from utils.files import get_files, read_config, pickle_binary
@@ -47,17 +48,18 @@ class DataPoint:
 
 
 class TTSDataset(Dataset):
-    def __init__(self, data):
+    def __init__(self, data: List[Tuple[str, Path]]):
         self.data = data
 
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> Tuple[str, Path]:
         return self.data[idx]
 
 
-def prepare_processing_batch(batch, dsp, text_dict, cleaner, pitch_extractor):
+def prepare_processing_batch(batch: List[Tuple[str, Path]], dsp: DSP, text_dict: Dict[str, str], cleaner: Cleaner,
+                             pitch_extractor: PitchExtractor) -> List[DataPoint]:
     batch_data_points = []
 
     for item_id, path in batch:
@@ -81,10 +83,11 @@ def prepare_processing_batch(batch, dsp, text_dict, cleaner, pitch_extractor):
             y = y * 0.95
 
         pitch = pitch_extractor(y).astype(np.float32)
+        cleaned_text = cleaner(text_dict[item_id])
 
         dp = DataPoint(
             item_id=item_id,
-            text=cleaner(text_dict[item_id]),
+            text=cleaned_text,
             pitch=pitch,
             raw_wav=raw_wav,
             processed_wav=y
@@ -126,6 +129,7 @@ if __name__ == '__main__':
                                                 metafile=args.metafile,
                                                 format=config['preprocessing']['metafile_format'],
                                                 n_workers=n_workers)
+
     text_dict = {item_id: text for item_id, text in text_dict.items()
                  if item_id in audio_ids and len(text) > config['preprocessing']['min_text_len']}
     file_id_to_audio = {k: v for k, v in file_id_to_audio.items() if k in text_dict}
@@ -194,7 +198,8 @@ if __name__ == '__main__':
                     np.save(paths.mel / f'{dp.item_id}.npy', mel, allow_pickle=False)
                     np.save(paths.raw_pitch / f'{dp.item_id}.npy', dp.pitch, allow_pickle=False)
 
-                    emb = voice_encoder.embed_utterance(dp.processed_wav.cpu().numpy().squeeze())
+                    reference_wav = sound_adjusted[index].cpu().numpy().squeeze()
+                    emb = voice_encoder.embed_utterance(reference_wav)
                     np.save(paths.speaker_emb / f'{dp.item_id}.npy', emb, allow_pickle=False)
 
                     dataset += [(dp.item_id, mel.shape[-1])]

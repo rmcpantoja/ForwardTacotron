@@ -54,20 +54,20 @@ class DSP:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # init transformations
-        self.volume_transform = self.init_volume_transform()
-        self.mel_transform = self.init_mel_transform()
+        self.volume_transform = self._init_volume_transform()
+        self.mel_transform = self._init_mel_transform()
 
     @classmethod
-    def from_config(cls, config: Dict[str, Any]) -> 'DSPTorchaudio':
+    def from_config(cls, config: Dict[str, Any]) -> 'DSP':
         """Initialize from configuration object"""
         return DSP(**config['dsp'])
 
-    def init_volume_transform(self):
+    def _init_volume_transform(self):
         """Initialize volume transformation"""
         volume_transform = transforms.Vol(gain=self.target_dBFS, gain_type='db').to(self.device)
         return volume_transform
 
-    def init_mel_transform(self):
+    def _init_mel_transform(self):
         """Initialize mel transformation"""
         mel_transform = transforms.MelSpectrogram(
             sample_rate=self.sample_rate,
@@ -121,7 +121,7 @@ class DSP:
         result = [processed_waveform[:, :lengths[index]] for index, processed_waveform in enumerate(processed_batch)]
         return result
 
-    def waveform_to_mel_batched(self, batch):
+    def waveform_to_mel_batched(self, batch: List[torch.Tensor]) -> List[torch.Tensor]:
         """Convert waveform to mel spectrogram for the batch of waveforms"""
         lengths = [tensor.size(1) for tensor in batch]
         expected_mel_lengths = [x // self.hop_length + 1 for x in lengths]
@@ -131,14 +131,14 @@ class DSP:
         list_of_mels = [mel[:, :, :expected_mel_lengths[index]] for index, mel in enumerate(mels)]
         return list_of_mels
 
-    def waveform_to_mel(self, waveform: torch.Tensor, normalized=True) -> torch.Tensor:
+    def waveform_to_mel(self, waveform: torch.Tensor, normalized: bool = True) -> torch.Tensor:
         """Convert waveform to mel spectrogram"""
         mel_spec = self.mel_transform(waveform)
         if normalized:
             mel_spec = self.normalize(mel_spec)
         return mel_spec
 
-    def griffinlim(self, mel: np.array, n_iter=32) -> np.array:
+    def griffinlim(self, mel: np.array, n_iter: int = 32) -> np.array:
         mel = self.denormalize(mel)
         S = librosa.feature.inverse.mel_to_stft(
             mel,
