@@ -1,11 +1,15 @@
 import warnings
 from collections import Counter
+from pathlib import Path
 from random import Random
+from typing import Tuple, List, Dict
 
+import numpy as np
 from tabulate import tabulate
-from torch.utils.data import Dataset, DataLoader
-from typing import Tuple
+from torch.utils.data import DataLoader
 
+from utils.dataset import PreprocessingDataPoint, PreprocessingDataset, tensor_to_ndarray
+from utils.display import simple_table
 from utils.dsp import DSP
 from utils.text.recipes import read_metadata
 
@@ -14,15 +18,12 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 import tqdm
 import argparse
 import traceback
-from dataclasses import dataclass
 from multiprocessing import cpu_count
 
 import torch
 from resemblyzer import VoiceEncoder
 
 from pitch_extraction.pitch_extractor import new_pitch_extractor_from_config, PitchExtractor
-from utils.display import *
-from utils.dsp import *
 from utils.files import get_files, read_config, pickle_binary
 from utils.paths import Paths
 from utils.text.cleaners import Cleaner
@@ -38,28 +39,8 @@ def valid_n_workers(num):
     return n
 
 
-@dataclass
-class DataPoint:
-    item_id: str
-    text: str
-    pitch: np.array
-    raw_wav: np.array
-    processed_wav: np.array
-
-
-class TTSDataset(Dataset):
-    def __init__(self, data: List[Tuple[str, Path]]):
-        self.data = data
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx) -> Tuple[str, Path]:
-        return self.data[idx]
-
-
 def prepare_processing_batch(batch: List[Tuple[str, Path]], dsp: DSP, text_dict: Dict[str, str], cleaner: Cleaner,
-                             pitch_extractor: PitchExtractor) -> List[DataPoint]:
+                             pitch_extractor: PitchExtractor) -> List[PreprocessingDataPoint]:
     batch_data_points = []
 
     for item_id, path in batch:
@@ -85,7 +66,7 @@ def prepare_processing_batch(batch: List[Tuple[str, Path]], dsp: DSP, text_dict:
         pitch = pitch_extractor(y).astype(np.float32)
         cleaned_text = cleaner(text_dict[item_id])
 
-        dp = DataPoint(
+        dp = PreprocessingDataPoint(
             item_id=item_id,
             text=cleaned_text,
             pitch=pitch,
@@ -170,15 +151,13 @@ if __name__ == '__main__':
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     voice_encoder = VoiceEncoder().to(device)
 
-    # run processing
-    start_time = time.monotonic()
-
     # Prepare processing
-    tts_dataset = TTSDataset(file_id_audio_list)
+    tts_dataset = PreprocessingDataset(file_id_audio_list)
     dataloader = DataLoader(tts_dataset,
                             num_workers=n_workers,
                             batch_size=batch_size,
-                            collate_fn=lambda batch: prepare_processing_batch(batch, dsp, text_dict, cleaner, pitch_extractor))
+                            collate_fn=lambda batch: prepare_processing_batch(batch, dsp, text_dict, cleaner,
+                                                                              pitch_extractor))
 
     # Process the dataset
     for batch in tqdm.tqdm(dataloader):
@@ -194,11 +173,11 @@ if __name__ == '__main__':
         for index, dp in enumerate(batch):
             if dp is not None and dp.item_id in text_dict:
                 try:
-                    mel = mels[index].cpu().numpy().squeeze()
+                    mel = tensor_to_ndarray(mels[index])
                     np.save(paths.mel / f'{dp.item_id}.npy', mel, allow_pickle=False)
                     np.save(paths.raw_pitch / f'{dp.item_id}.npy', dp.pitch, allow_pickle=False)
 
-                    reference_wav = sound_adjusted[index].cpu().numpy().squeeze()
+                    reference_wav = tensor_to_ndarray(sound_adjusted[index])
                     emb = voice_encoder.embed_utterance(reference_wav)
                     np.save(paths.speaker_emb / f'{dp.item_id}.npy', emb, allow_pickle=False)
 
@@ -207,10 +186,6 @@ if __name__ == '__main__':
                     successful_ids.add(dp.item_id)
                 except Exception as e:
                     print(traceback.format_exc())
-
-    end_time = time.monotonic()
-    elapsed_time = end_time - start_time
-    print(f"Execution time: {elapsed_time} seconds")
 
     # filter according to successfully preprocessed datapoints
     text_dict = {k: v for k, v in text_dict.items() if k in successful_ids}

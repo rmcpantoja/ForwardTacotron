@@ -9,6 +9,8 @@ from scipy.ndimage import binary_dilation
 import torchaudio
 import torchaudio.transforms as transforms
 
+from utils.dataset import tensor_to_ndarray, ndarray_to_tensor
+
 
 class DSP:
 
@@ -84,17 +86,6 @@ class DSP:
 
         return mel_transform
 
-    @staticmethod
-    def tensor_to_ndarray(tensor: torch.Tensor) -> np.array:
-        """Convert torch tensor to numpy array"""
-        return tensor.cpu().detach().numpy().squeeze(0)
-
-    @staticmethod
-    def ndarray_to_tensor(array: np.array) -> torch.Tensor:
-        """Convert numpy array to torch tensor"""
-        tensor = torch.from_numpy(array)
-        tensor = torch.unsqueeze(tensor, 0)
-        return tensor
 
     def load_wav(self, path: Union[str, Path], mono: bool = True) -> torch.Tensor:
         """Load audio file into a tensor"""
@@ -179,16 +170,16 @@ class DSP:
 
     def trim_silence(self, waveform: torch.Tensor) -> torch.Tensor:
         """Trim silence from the waveform"""
-        waveform = self.tensor_to_ndarray(waveform)
+        waveform = tensor_to_ndarray(waveform)
         trimmed_waveform = librosa.effects.trim(waveform,
                                                 top_db=self.trim_silence_top_db,
                                                 frame_length=self.win_length,
                                                 hop_length=self.hop_length)
-        return self.ndarray_to_tensor(trimmed_waveform[0])
+        return ndarray_to_tensor(trimmed_waveform[0])
 
     # borrowed from https://github.com/resemble-ai/Resemblyzer/blob/master/resemblyzer/audio.py
     def trim_long_silences(self, wav: torch.Tensor) -> torch.Tensor:
-        wav = self.tensor_to_ndarray(wav)
+        wav = tensor_to_ndarray(wav)
         int16_max = (2 ** 15) - 1
         samples_per_window = (self.vad_window_length * self.vad_sample_rate) // 1000
         wav = wav[:len(wav) - (len(wav) % samples_per_window)]
@@ -209,4 +200,4 @@ class DSP:
         audio_mask = np.round(audio_mask).astype(np.bool)
         audio_mask[:] = binary_dilation(audio_mask[:], np.ones(self.vad_max_silence_length + 1))
         audio_mask = np.repeat(audio_mask, samples_per_window)
-        return self.ndarray_to_tensor(wav[audio_mask])
+        return ndarray_to_tensor(wav[audio_mask])

@@ -7,6 +7,8 @@ import numpy as np
 import torchaudio.functional as F
 import torch
 
+from utils.dataset import tensor_to_ndarray
+
 try:
     import pyworld as pw
 except ImportError as e:
@@ -42,7 +44,7 @@ class LibrosaPitchExtractor(PitchExtractor):
 
     def __call__(self, wav: Union[torch.Tensor, np.array]) -> np.array:
         if torch.is_tensor(wav):
-            wav = wav.numpy().squeeze()
+            wav = tensor_to_ndarray(wav)
         pitch, _, _ = librosa.pyin(wav,
                                    fmin=self.fmin,
                                    fmax=self.fmax,
@@ -63,7 +65,7 @@ class PyworldPitchExtractor(PitchExtractor):
 
     def __call__(self, wav: Union[torch.Tensor, np.array]) -> np.array:
         if torch.is_tensor(wav):
-            wav = wav.numpy().squeeze()
+            wav = tensor_to_ndarray(wav)
         return pw.dio(wav.astype(np.float64), self.sample_rate,
                       frame_period=self.hop_length / self.sample_rate * 1000)[0]
 
@@ -80,7 +82,9 @@ class TorchAudioPitchExtractor(PitchExtractor):
         self.freq_min = freq_min
         self.freq_max = freq_max
 
-    def __call__(self, wav: np.array) -> np.array:
+    def __call__(self, wav: Union[torch.Tensor, np.array]) -> np.array:
+        if torch.is_tensor(wav):
+            wav = tensor_to_ndarray(wav)
         return F.detect_pitch_frequency(waveform=wav,
                                         sample_rate=self.sample_rate,
                                         frame_time=self.hop_length / self.sample_rate,
