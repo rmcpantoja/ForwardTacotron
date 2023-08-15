@@ -84,6 +84,18 @@ class DSP:
 
         return mel_transform
 
+    @staticmethod
+    def tensor_to_ndarray(tensor: torch.Tensor) -> np.array:
+        """Convert torch tensor to numpy array"""
+        return tensor.cpu().detach().numpy().squeeze(0)
+
+    @staticmethod
+    def ndarray_to_tensor(array: np.array) -> torch.Tensor:
+        """Convert numpy array to torch tensor"""
+        tensor = torch.from_numpy(array)
+        tensor = torch.unsqueeze(tensor, 0)
+        return tensor
+
     def load_wav(self, path: Union[str, Path], mono: bool = True) -> torch.Tensor:
         """Load audio file into a tensor"""
         effects = []
@@ -154,29 +166,29 @@ class DSP:
             win_length=self.win_length)
         return wav
 
-    def normalize(self, mel: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def normalize(mel: torch.Tensor) -> torch.Tensor:
         """Normalize mel spectrogram"""
         mel = torch.clip(mel, min=1.e-5, max=None)
         return torch.log(mel)
 
-    def denormalize(self, mel: np.ndarray) -> np.ndarray:
+    @staticmethod
+    def denormalize(mel: np.ndarray) -> np.ndarray:
         """Denormalize mel spectrogram"""
         return np.exp(mel)
 
-    def trim_silence(self, waveform: np.array) -> torch.Tensor:
+    def trim_silence(self, waveform: torch.Tensor) -> torch.Tensor:
         """Trim silence from the waveform"""
+        waveform = self.tensor_to_ndarray(waveform)
         trimmed_waveform = librosa.effects.trim(waveform,
                                                 top_db=self.trim_silence_top_db,
                                                 frame_length=self.win_length,
                                                 hop_length=self.hop_length)
-        trimmed_waveform = torch.from_numpy(trimmed_waveform[0])
-        trimmed_waveform = torch.unsqueeze(trimmed_waveform, 0)
-        return trimmed_waveform
+        return self.ndarray_to_tensor(trimmed_waveform[0])
 
     # borrowed from https://github.com/resemble-ai/Resemblyzer/blob/master/resemblyzer/audio.py
-    def trim_long_silences(self, wav: Union[torch.Tensor, np.array]) -> np.array:
-        if torch.is_tensor(wav):
-            wav = wav.numpy().squeeze(0)
+    def trim_long_silences(self, wav: torch.Tensor) -> torch.Tensor:
+        wav = self.tensor_to_ndarray(wav)
         int16_max = (2 ** 15) - 1
         samples_per_window = (self.vad_window_length * self.vad_sample_rate) // 1000
         wav = wav[:len(wav) - (len(wav) % samples_per_window)]
@@ -197,4 +209,4 @@ class DSP:
         audio_mask = np.round(audio_mask).astype(np.bool)
         audio_mask[:] = binary_dilation(audio_mask[:], np.ones(self.vad_max_silence_length + 1))
         audio_mask = np.repeat(audio_mask, samples_per_window)
-        return wav[audio_mask]
+        return self.ndarray_to_tensor(wav[audio_mask])
