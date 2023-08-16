@@ -489,7 +489,7 @@ class PreprocessingDataPoint:
     item_id: str
     text: str
     pitch: np.array
-    raw_wav: np.array
+    reference_wav: np.array
     processed_wav: np.array
 
 

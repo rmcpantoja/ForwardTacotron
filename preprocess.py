@@ -22,6 +22,7 @@ from multiprocessing import cpu_count
 
 import torch
 from resemblyzer import VoiceEncoder
+from resemblyzer import preprocess_wav as preprocess_resemblyzer
 
 from pitch_extraction.pitch_extractor import new_pitch_extractor_from_config, PitchExtractor
 from utils.files import get_files, read_config, pickle_binary
@@ -47,8 +48,7 @@ def prepare_processing_batch(batch: List[Tuple[str, Path]], dsp: DSP, text_dict:
         try:
             y = dsp.load_wav(path)
 
-            # used later for embedding extraction
-            raw_wav = copy.deepcopy(y)
+            reference_wav = preprocess_resemblyzer(tensor_to_ndarray(y), source_sr=dsp.sample_rate)
 
             if dsp.should_trim_long_silences:
                 y = dsp.trim_long_silences(y)
@@ -71,7 +71,7 @@ def prepare_processing_batch(batch: List[Tuple[str, Path]], dsp: DSP, text_dict:
                 item_id=item_id,
                 text=cleaned_text,
                 pitch=pitch,
-                raw_wav=raw_wav,
+                reference_wav=reference_wav,
                 processed_wav=y
             )
 
@@ -172,10 +172,6 @@ if __name__ == '__main__':
         processed_wavs = [dp.processed_wav for dp in batch]
         mels = dsp.waveform_to_mel_batched(processed_wavs)
 
-        # adjust volume in a batch
-        raw_wavs = [dp.raw_wav for dp in batch]
-        sound_adjusted = dsp.adjust_volume_batched(raw_wavs)
-
         # iterate over batch to perform non-batched computations and writing results
         for index, dp in enumerate(batch):
             if dp is not None and dp.item_id in text_dict:
@@ -184,8 +180,7 @@ if __name__ == '__main__':
                     np.save(paths.mel / f'{dp.item_id}.npy', mel, allow_pickle=False)
                     np.save(paths.raw_pitch / f'{dp.item_id}.npy', dp.pitch, allow_pickle=False)
 
-                    reference_wav = tensor_to_ndarray(sound_adjusted[index])
-                    emb = voice_encoder.embed_utterance(reference_wav)
+                    emb = voice_encoder.embed_utterance(dp.reference_wav)
                     np.save(paths.speaker_emb / f'{dp.item_id}.npy', emb, allow_pickle=False)
 
                     dataset += [(dp.item_id, mel.shape[-1])]
