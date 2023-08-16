@@ -157,10 +157,12 @@ if __name__ == '__main__':
     voice_encoder = VoiceEncoder().to(device)
 
     # Prepare processing
+    print('Running preprocessing...')
     tts_dataset = PreprocessingDataset(file_id_audio_list)
     dataloader = DataLoader(tts_dataset,
                             num_workers=n_workers,
                             batch_size=batch_size,
+                            shuffle=False,
                             collate_fn=lambda batch: prepare_processing_batch(batch, dsp, text_dict, cleaner,
                                                                               pitch_extractor))
 

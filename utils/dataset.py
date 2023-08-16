@@ -6,6 +6,7 @@ from random import Random
 from typing import List, Tuple, Iterator, Dict, Any, Union
 
 import numpy as np
+import soundfile as sf
 import torch
 from tabulate import tabulate
 from torch.utils.data import Dataset, DataLoader
@@ -494,8 +495,13 @@ class PreprocessingDataPoint:
 
 class PreprocessingDataset(Dataset):
     """Dataset used for preprocessing"""
-    def __init__(self, data: List[Tuple[str, Path]]):
+    def __init__(self, data: List[Tuple[str, Path]], sort_by_duration: bool = True):
         self.data = data
+        if sort_by_duration:
+            self._sort_by_duration()
+
+    def _sort_by_duration(self):
+        self.data = sorted(self.data, key=lambda item: sf.info(item[1]).duration)
 
     def __len__(self):
         return len(self.data)
