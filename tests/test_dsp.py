@@ -4,11 +4,13 @@ from pathlib import Path
 
 import librosa
 import numpy as np
+import torch
 
 from utils.dataset import tensor_to_ndarray
 from utils.dsp import DSP
 from utils.files import read_config
 import torch.nn.functional as F
+
 
 class TestDSP(unittest.TestCase):
 
@@ -47,7 +49,7 @@ class TestDSP(unittest.TestCase):
         # compare results
         for mel_batched, mel_single in zip(mels_batched, mels_single_processing):
             mse = F.mse_loss(mel_batched, mel_single).item()
-            self.assertLess(mse, 0.01)
+            self.assertLess(mse, 1e-10)
 
     def test_batched_volume_adjustment(self) -> None:
         # read wav files
@@ -60,6 +62,6 @@ class TestDSP(unittest.TestCase):
         normalized_single_processing = [self.dsp.adjust_volume(waveform) for waveform in waveforms]
 
         # compare results
-        for mel_batched, mel_single in zip(normalized_batched, normalized_single_processing):
-            mse = F.mse_loss(mel_batched, mel_single).item()
+        for norm_batch, norm_single in zip(normalized_batched, normalized_single_processing):
+            mse = F.mse_loss(norm_batch, norm_single).item()
             self.assertEqual(mse, 0)
