@@ -26,7 +26,6 @@ class DSP:
                  trim_start_end_silence: bool,
                  trim_silence_top_db:  int,
                  trim_long_silences: bool,
-                 target_dBFS: float,
                  vad_sample_rate: int,
                  vad_window_length: float,
                  vad_moving_average_width: float,
@@ -41,7 +40,6 @@ class DSP:
         self.n_fft = n_fft
         self.fmin = fmin
         self.fmax = fmax
-        self.target_dBFS = target_dBFS
 
         self.should_peak_norm = peak_norm
         self.should_trim_start_end_silence = trim_start_end_silence
@@ -55,19 +53,13 @@ class DSP:
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # init transformations
-        self.volume_transform = self._init_volume_transform()
+        # init transformation
         self.mel_transform = self._init_mel_transform()
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> 'DSP':
         """Initialize from configuration object"""
         return DSP(**config['dsp'])
-
-    def _init_volume_transform(self):
-        """Initialize volume transformation"""
-        volume_transform = transforms.Vol(gain=self.target_dBFS, gain_type='db').to(self.device)
-        return volume_transform
 
     def _init_mel_transform(self):
         """Initialize mel transformation"""
@@ -85,7 +77,6 @@ class DSP:
         ).to(self.device)
 
         return mel_transform
-
 
     def load_wav(self, path: Union[str, Path], mono: bool = True) -> torch.Tensor:
         """Load audio file into a tensor"""
@@ -111,16 +102,17 @@ class DSP:
         """Save waveform to file"""
         torchaudio.save(filepath=path, src=waveform, sample_rate=self.sample_rate)
 
-    def adjust_volume(self, waveform: torch.Tensor) -> torch.Tensor:
+    def adjust_volume(self, waveform: torch.Tensor, target_dbfs: int = -30) -> torch.Tensor:
         """Adjust volume of the waveform"""
-        return self.volume_transform(waveform)
+        volume_transform = transforms.Vol(gain=target_dbfs, gain_type='db').to(self.device)
+        return volume_transform(waveform)
 
-    def adjust_volume_batched(self, data: List[torch.Tensor]) -> List[torch.Tensor]:
+    def adjust_volume_batched(self, data: List[torch.Tensor], target_dbfs: int = -30) -> List[torch.Tensor]:
         """Adjust volume of the waveforms in the batch"""
         lengths = [tensor.size(1) for tensor in data]
         padded_batch = [torch.nn.functional.pad(x, (0, max(lengths) - x.size(1))) for x in data]
         stacked_tensor = torch.stack(padded_batch, dim=0)
-        processed_batch = self.adjust_volume(stacked_tensor)
+        processed_batch = self.adjust_volume(stacked_tensor, target_dbfs=target_dbfs)
         result = [processed_waveform[:, :lengths[index]] for index, processed_waveform in enumerate(processed_batch)]
         return result
 

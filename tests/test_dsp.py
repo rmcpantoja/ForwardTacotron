@@ -55,11 +55,12 @@ class TestDSP(unittest.TestCase):
         # read wav files
         waveforms = self.load_wavs()
 
+        target_dbfs = -30
         # process in batch
-        normalized_batched = self.dsp.adjust_volume_batched(waveforms)
+        normalized_batched = self.dsp.adjust_volume_batched(waveforms, target_dbfs=target_dbfs)
 
         # process one by one
-        normalized_single_processing = [self.dsp.adjust_volume(waveform) for waveform in waveforms]
+        normalized_single_processing = [self.dsp.adjust_volume(waveform, target_dbfs=target_dbfs) for waveform in waveforms]
 
         # compare results
         for norm_batch, norm_single in zip(normalized_batched, normalized_single_processing):
