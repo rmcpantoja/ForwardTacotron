@@ -40,48 +40,59 @@ def valid_n_workers(num):
     return n
 
 
-def prepare_processing_batch(batch: List[Tuple[str, Path]], dsp: DSP, text_dict: Dict[str, str], cleaner: Cleaner,
-                             pitch_extractor: PitchExtractor) -> List[PreprocessingDataPoint]:
-    batch_data_points = []
+class PreprocessingBatchCollator:
 
-    for item_id, path in batch:
-        try:
-            y = dsp.load_wav(path)
+    def __init__(self,
+                 dsp: DSP,
+                 text_dict: Dict[str, str],
+                 cleaner: Cleaner,
+                 pitch_extractor: PitchExtractor) -> None:
+        self.dsp = dsp
+        self.text_dict = text_dict
+        self.cleaner = cleaner
+        self.pitch_extractor = pitch_extractor
 
-            reference_wav = preprocess_resemblyzer(tensor_to_ndarray(y), source_sr=dsp.sample_rate)
+    def __call__(self, batch: List[Tuple[str, Path]]) -> List[PreprocessingDataPoint]:
+        batch_data_points = []
 
-            if dsp.should_trim_long_silences:
-                y = dsp.trim_long_silences(y)
-            if dsp.should_trim_start_end_silence:
-                y = dsp.trim_silence(y)
+        for item_id, path in batch:
+            try:
+                y = self.dsp.load_wav(path)
 
-            if y.shape[-1] == 0:
-                print(f'Skipping {item_id} because of the zero length')
+                reference_wav = preprocess_resemblyzer(tensor_to_ndarray(y), source_sr=self.dsp.sample_rate)
+
+                if self.dsp.should_trim_long_silences:
+                    y = self.dsp.trim_long_silences(y)
+                if self.dsp.should_trim_start_end_silence:
+                    y = self.dsp.trim_silence(y)
+
+                if y.shape[-1] == 0:
+                    print(f'Skipping {item_id} because of the zero length')
+                    continue
+
+                peak = torch.abs(y).max()
+                if self.dsp.should_peak_norm or peak > 1.0:
+                    y /= peak
+                    y = y * 0.95
+
+                pitch = self.pitch_extractor(y).astype(np.float32)
+                cleaned_text = self.cleaner(text_dict[item_id])
+
+                dp = PreprocessingDataPoint(
+                    item_id=item_id,
+                    text=cleaned_text,
+                    pitch=pitch,
+                    reference_wav=reference_wav,
+                    processed_wav=y
+                )
+
+                batch_data_points.append(dp)
+            except Exception as e:
+                print(f'Error processing {item_id}: {e}')
+                print(traceback.format_exc())
                 continue
 
-            peak = torch.abs(y).max()
-            if dsp.should_peak_norm or peak > 1.0:
-                y /= peak
-                y = y * 0.95
-
-            pitch = pitch_extractor(y).astype(np.float32)
-            cleaned_text = cleaner(text_dict[item_id])
-
-            dp = PreprocessingDataPoint(
-                item_id=item_id,
-                text=cleaned_text,
-                pitch=pitch,
-                reference_wav=reference_wav,
-                processed_wav=y
-            )
-
-            batch_data_points.append(dp)
-        except Exception as e:
-            print(f'Error processing {item_id}: {e}')
-            print(traceback.format_exc())
-            continue
-
-    return batch_data_points
+        return batch_data_points
 
 
 parser = argparse.ArgumentParser(description='Dataset preprocessing')
@@ -144,6 +155,10 @@ if __name__ == '__main__':
     cleaner = Cleaner.from_config(config)
     pitch_extractor = new_pitch_extractor_from_config(config)
     dsp = DSP.from_config(config)
+    preprocessing_batch_collator = PreprocessingBatchCollator(dsp=dsp,
+                                                              cleaner=cleaner,
+                                                              text_dict=text_dict,
+                                                              pitch_extractor=pitch_extractor)
 
     simple_table([
         ('Sample Rate', dsp.sample_rate),
@@ -163,8 +178,7 @@ if __name__ == '__main__':
                             num_workers=n_workers,
                             batch_size=batch_size,
                             shuffle=False,
-                            collate_fn=lambda batch: prepare_processing_batch(batch, dsp, text_dict, cleaner,
-                                                                              pitch_extractor))
+                            collate_fn=preprocessing_batch_collator)
 
     # Process the dataset
     for batch in tqdm.tqdm(dataloader):
