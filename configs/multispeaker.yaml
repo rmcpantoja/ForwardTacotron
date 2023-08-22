@@ -40,10 +40,8 @@ preprocessing:
   use_phonemes: True                    # whether to phonemize the text
                                         # if set to False, you have to provide the phonemized text yourself
   min_text_len: 2
-  pitch_min_freq: 30                    # Minimum value for pitch frequency to remove outliers (Common pitch range is
-                                        # about 60-300)
-  pitch_max_freq: 600                   # Maximum value for pitch frequency to remove outliers (Common pitch range is
-                                        # about 60-300)¡
+  pitch_min_freq: 30                    # Minimum value for pitch frequency to remove outliers (Common pitch range is about 60-300)
+  pitch_max_freq: 600                   # Maximum value for pitch frequency to remove outliers (Common pitch range is about 60-300)
   pitch_extractor: pyworld              # choice of pitch extraction library, choices: [librosa, pyworld]
   pitch_frame_length: 2048              # Frame length for extracting pitch with librosa
 
@@ -90,7 +88,7 @@ tacotron:
 
     filter:
       max_mel_len: 1250                    # filter files with mel len larger than given
-      filter_duration_stats: False          # whether to filter according to the duration stats below
+      filter_duration_stats: False         # whether to filter according to the duration stats below
       min_attention_sharpness: 0.5         # filter files with bad attention sharpness score, if 0 then no filter
       min_attention_alignment: 0.95        # filter files with bad attention alignment score, if 0 then no filter
       max_duration: 40                     # filter files with durations larger than given
@@ -102,7 +100,7 @@ multi_forward_tacotron:
   model:
     speaker_emb_dims: 256
     embed_dims: 256                 # embedding dimension for main model
-    series_embed_dims: 128           # embedding dimension for series predictor
+    series_embed_dims: 128          # embedding dimension for series predictor
 
     durpred_conv_dims: 256
     durpred_rnn_dims: 128
@@ -193,7 +191,7 @@ multi_fast_pitch:
     pitch_cond_d_fft: 128
     pitch_cond_dropout: 0.5
     pitch_cond_output_dims: 3  # dimension of categorical output of pitch conditioning, should be set to 3
-                                    # (zero=padding, one=zero pitch, two=nonzero pitch)
+                               # (zero=padding, one=zero pitch, two=nonzero pitch)
 
     d_model: 256
     conv1_kernel: 9

@@ -1,15 +1,17 @@
 import random
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from random import Random
-from typing import List, Tuple, Iterator
+from typing import List, Tuple, Iterator, Dict, Any, Union
 
+import numpy as np
+import soundfile as sf
 import torch
 from tabulate import tabulate
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import Sampler
 
-from utils.dsp import *
 from utils.files import unpickle_binary
 from utils.paths import Paths
 from utils.text.tokenizer import Tokenizer
@@ -480,3 +482,41 @@ def _batchify(input: List[Any], batch_size: int) -> List[List[Any]]:
         batch = input[i:min(i + batch_size, input_len)]
         output.append(batch)
     return output
+
+
+@dataclass
+class PreprocessingDataPoint:
+    item_id: str
+    text: str
+    pitch: np.array
+    reference_wav: np.array
+    processed_wav: np.array
+
+
+class PreprocessingDataset(Dataset):
+    """Dataset used for preprocessing"""
+    def __init__(self, data: List[Tuple[str, Path]], sort_by_duration: bool = True):
+        self.data = data
+        if sort_by_duration:
+            self._sort_by_duration()
+
+    def _sort_by_duration(self):
+        self.data = sorted(self.data, key=lambda item: sf.info(item[1]).duration)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx) -> Tuple[str, Path]:
+        return self.data[idx]
+
+
+def tensor_to_ndarray(tensor: torch.Tensor) -> np.array:
+    """Convert torch tensor to numpy array"""
+    return tensor.cpu().detach().numpy().squeeze()
+
+
+def ndarray_to_tensor(array: np.array) -> torch.Tensor:
+    """Convert numpy array to torch tensor"""
+    tensor = torch.from_numpy(array)
+    tensor = torch.unsqueeze(tensor, 0)
+    return tensor
