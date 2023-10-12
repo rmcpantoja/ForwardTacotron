@@ -2,7 +2,7 @@ import torch
 from models.forward_tacotron import ForwardTacotron
 from typing import Optional
 
-tts_model = ForwardTacotron.from_checkpoint('C:/Users/LENOVO_User/Documents/ForwardTacotron-NVDA/addon/synthDrivers/Forward/server/forward_step90k.pt')
+tts_model = ForwardTacotron.from_checkpoint('forward_step90k.pt')
 tts_model.eval()
 
 OPSET = 15
