@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from utils.dataset import PreprocessingDataPoint, PreprocessingDataset, tensor_to_ndarray
 from utils.display import simple_table
 from utils.dsp import DSP
+from utils.mel_processing import spectrogram_torch
 from utils.text.recipes import read_metadata
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -74,7 +75,10 @@ class PreprocessingBatchCollator:
                 if self.dsp.should_peak_norm or peak > 1.0:
                     y /= peak
                     y = y * 0.95
-
+                audio = spectrogram_torch(audio_norm, self.dsp.win_length,
+                    self.dsp.sample_rate, self.dsp.hop_length, self.dsp.win_length,
+                    center=False)
+                audio = torch.squeeze(audio, 0)
                 pitch = self.pitch_extractor(y).astype(np.float32)
                 cleaned_text = self.cleaner(text_dict[item_id])
 
@@ -83,7 +87,8 @@ class PreprocessingBatchCollator:
                     text=cleaned_text,
                     pitch=pitch,
                     reference_wav=reference_wav,
-                    processed_wav=y
+                    processed_wav=y,
+                    audio=audio
                 )
 
                 batch_data_points.append(dp)
@@ -193,7 +198,7 @@ if __name__ == '__main__':
                     mel = tensor_to_ndarray(mels[index])
                     np.save(paths.mel / f'{dp.item_id}.npy', mel, allow_pickle=False)
                     np.save(paths.raw_pitch / f'{dp.item_id}.npy', dp.pitch, allow_pickle=False)
-
+                    torch.save(dp.audio, paths.audio/f'{dp.item_id}.pt')
                     emb = voice_encoder.embed_utterance(dp.reference_wav)
                     np.save(paths.speaker_emb / f'{dp.item_id}.npy', emb, allow_pickle=False)
 

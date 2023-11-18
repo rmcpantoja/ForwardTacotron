@@ -7,8 +7,9 @@ from typing import Union
 
 import torch
 from torch import optim
+from torch.cuda.amp import GradScaler
 from torch.utils.data.dataloader import DataLoader
-
+from models.hifigan import MultiPeriodDiscriminator
 from models.fast_pitch import FastPitch
 from models.forward_tacotron import ForwardTacotron
 from trainer.common import to_device
@@ -18,7 +19,7 @@ from utils.checkpoints import restore_checkpoint, init_tts_model
 from utils.dataset import get_forward_dataloaders
 from utils.display import *
 from utils.dsp import DSP
-from utils.files import read_config
+from utils.files import parse_schedule, read_config
 from utils.paths import Paths
 
 
@@ -72,10 +73,27 @@ if __name__ == '__main__':
 
     # Instantiate Forward TTS Model
     model = init_tts_model(config).to(device)
+    model_type = config.get('tts_model', 'forward_tacotron')
+    disc = MultiPeriodDiscriminator().to(device)
+    learning_rate = parse_schedule(config[model_type]['training']['schedule'])[0][0]
+    print(learning_rate)
+    optim_g = torch.optim.AdamW(
+        model.parameters(),
+        learning_rate,
+        config[model_type]["training"]["betas"],
+        eps = 1e-9
+    )
+    optim_d = torch.optim.AdamW(
+        disc.parameters(),
+        learning_rate,
+        config[model_type]["training"]["betas"],
+        eps = 1e-9
+    )
+    scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=config[model_type]["training"]["lr_decay"], last_epoch=-1)
+    scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=config[model_type]["training"]["lr_decay"], last_epoch=-1)
     print(f'\nInitialized tts model: {model}\n')
-    optimizer = optim.Adam(model.parameters())
-    restore_checkpoint(model=model, optim=optimizer,
-                       path=paths.forward_checkpoints / 'latest_model.pt',
+    restore_checkpoint(model=model, optim=optim_g,
+                       path=paths.forward_checkpoints / 'latest_g.pt',
                        device=device)
 
     if force_gta:
@@ -88,5 +106,6 @@ if __name__ == '__main__':
         trainer.train(model, optimizer)
     else:
         trainer = ForwardTrainer(paths=paths, dsp=dsp, config=config)
-        trainer.train(model, optimizer)
+        scaler = GradScaler(enabled=False)
+        trainer.train(model, disc, [optim_g, optim_d], [scheduler_g, scheduler_d], scaler)
 

@@ -2,10 +2,12 @@ import time
 from typing import Dict, Any, Union
 
 import torch
+from torch.cuda.amp import autocast, GradScaler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-
+from models.hifigan import MultiPeriodDiscriminator, feature_loss, discriminator_loss, generator_loss
+from models.hifiutils import plot_spectrogram_to_numpy
 from models.fast_pitch import FastPitch
 from models.forward_tacotron import ForwardTacotron
 from trainer.common import Averager, TTSSession, MaskedL1, to_device, np_now
@@ -15,6 +17,7 @@ from utils.decorators import ignore_exception
 from utils.display import stream, simple_table, plot_mel, plot_pitch
 from utils.dsp import DSP
 from utils.files import parse_schedule
+from utils.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
 from utils.paths import Paths
 
 
@@ -32,7 +35,7 @@ class ForwardTrainer:
         self.writer = SummaryWriter(log_dir=paths.forward_log, comment='v1')
         self.l1_loss = MaskedL1()
 
-    def train(self, model: Union[ForwardTacotron, FastPitch], optimizer: Optimizer) -> None:
+    def train(self, model: Union[ForwardTacotron, FastPitch], disc: MultiPeriodDiscriminator, optimizers: list[Optimizer], schedulers: list, scaler: GradScaler) -> None:
         forward_schedule = self.train_cfg['schedule']
         forward_schedule = parse_schedule(forward_schedule)
         for i, session_params in enumerate(forward_schedule, 1):
@@ -44,10 +47,10 @@ class ForwardTrainer:
                 session = TTSSession(
                     index=i, r=1, lr=lr, max_step=max_step,
                     bs=bs, train_set=train_set, val_set=val_set)
-                self.train_session(model, optimizer, session)
+                self.train_session(model, disc, optimizers, schedulers, scaler, session)
 
-    def train_session(self,  model: Union[ForwardTacotron, FastPitch],
-                      optimizer: Optimizer, session: TTSSession) -> None:
+    def train_session(self,  model: Union[ForwardTacotron, FastPitch], disc: MultiPeriodDiscriminator,
+                      optimizers: list[Optimizer], schedulers: list, scaler: GradScaler, session: TTSSession) -> None:
         current_step = model.get_step()
         training_steps = session.max_step - current_step
         total_iters = len(session.train_set)
@@ -55,7 +58,8 @@ class ForwardTrainer:
         simple_table([(f'Steps', str(training_steps // 1000) + 'k Steps'),
                       ('Batch Size', session.bs),
                       ('Learning Rate', session.lr)])
-
+        optim_g, optim_d = optims
+        scheduler_g, scheduler_d = schedulers
         for g in optimizer.param_groups:
             g['lr'] = session.lr
 
@@ -69,7 +73,7 @@ class ForwardTrainer:
                 batch = to_device(batch, device=device)
                 start = time.time()
                 model.train()
-
+                disc.train()
                 pitch_zoneout_mask = torch.rand(batch['x'].size()) > self.train_cfg['pitch_zoneout']
                 energy_zoneout_mask = torch.rand(batch['x'].size()) > self.train_cfg['energy_zoneout']
 
@@ -79,7 +83,26 @@ class ForwardTrainer:
                 batch['energy'] = batch['energy'] * energy_zoneout_mask.to(device).float()
 
                 pred = model(batch)
-
+                pred['audio'] =                 pred['audio'].float()
+                hat_mel = mel_spectrogram_torch(
+                    pred['audio'].squeeze(1), 
+                    config["dsp"]["win_length"], 
+                    config["dsp"]["num_mels"], 
+                    config["dsp"]["sample_rate"], 
+                    config["dsp"]["hop_length"], 
+                    config["dsp"]["win_length"], 
+                    config["dsp"]["fmin"], 
+                    config["dsp"]["fmax"]
+                )
+                y_d_hat_r, y_d_hat_g, _, _ = disc(batch['wav'], y_hat.detach())
+                with autocast(enabled=False):
+                    loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(y_d_hat_r, y_d_hat_g)
+                    loss_disc_all = loss_disc
+                optim_d.zero_grad()
+                scaler.scale(loss_disc_all).backward()
+                scaler.unscale_(optim_d)
+                grad_norm_d = commons.clip_grad_value_(disc.parameters(), None)
+                scaler.step(optim_d)
                 m1_loss = self.l1_loss(pred['mel'], batch['mel'], batch['mel_len'])
                 m2_loss = self.l1_loss(pred['mel_post'], batch['mel'], batch['mel_len'])
 
@@ -91,12 +114,23 @@ class ForwardTrainer:
                        + self.train_cfg['dur_loss_factor'] * dur_loss \
                        + self.train_cfg['pitch_loss_factor'] * pitch_loss \
                        + self.train_cfg['energy_loss_factor'] * energy_loss
-
-                optimizer.zero_grad()
+                with autocast(enabled=hps.train.fp16_run):
+                    y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = disc(batch['wav'], y_hat)
+                    with autocast(enabled=False):
+                        loss_mel = F.l1_loss(batch['wav'], y_hat_mel) * 45
+                        loss_fm = feature_loss(fmap_r, fmap_g)
+                        loss_gen, losses_gen = generator_loss(y_d_hat_g)
+                        loss_gen_all = loss_gen + loss_fm + loss_mel
+                optim_g.zero_grad()
+                scaler.scale(loss_gen_all).backward()
                 loss.backward()
+                scaler.unscale_(optim_g)
+                grad_norm_g = commons.clip_grad_value_(model.parameters(), None)
+                scaler.step(optim_g)
+                scaler.update()
                 torch.nn.utils.clip_grad_norm_(model.parameters(),
                                                self.train_cfg['clip_grad_norm'])
-                optimizer.step()
+                optim_g.step()
 
                 m_loss_avg.add(m1_loss.item() + m2_loss.item())
                 dur_loss_avg.add(dur_loss.item())
@@ -112,8 +146,16 @@ class ForwardTrainer:
                       f'| {speed:#.2} steps/s | Step: {k}k | '
 
                 if step % self.train_cfg['checkpoint_every'] == 0:
-                    save_checkpoint(model=model, optim=optimizer, config=self.config,
-                                    path=self.paths.forward_checkpoints / f'forward_step{k}k.pt')
+                    lr = optim_g.param_groups[0]['lr']
+                    scalar_dict = {"loss/g/total": loss_gen_all, "loss/d/total": loss_disc_all, "learning_rate": lr, "grad_norm_d": grad_norm_d, "grad_norm_g": grad_norm_g}
+                    scalar_dict.update({"loss/g/fm": loss_fm, "loss/g/mel": loss_mel})
+                    scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
+                    scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
+                    scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
+                    save_checkpoint(model=model, optim=optim_g, config=self.config,
+                                    path=self.paths.forward_checkpoints / f'g_{k}k.pt')
+                    save_checkpoint(model=disc, optim=optim_d, config=self.config,
+                                    path=self.paths.forward_checkpoints / f'd{k}k.pt')
 
                 if step % self.train_cfg['plot_every'] == 0:
                     self.generate_plots(model, session)
@@ -132,8 +174,10 @@ class ForwardTrainer:
             self.writer.add_scalar('Duration_Loss/val', val_out['dur_loss'], model.get_step())
             self.writer.add_scalar('Pitch_Loss/val', val_out['pitch_loss'], model.get_step())
             self.writer.add_scalar('Energy_Loss/val', val_out['energy_loss'], model.get_step())
-            save_checkpoint(model=model, optim=optimizer, config=self.config,
-                            path=self.paths.forward_checkpoints / 'latest_model.pt')
+            save_checkpoint(model=model, optim=optim_g, config=self.config,
+                            path=self.paths.forward_checkpoints / 'latest_g.pt')
+            save_checkpoint(model=disc, optim=optim_d, config=self.config,
+                            path=self.paths.forward_checkpoints / 'latest_d.pt')
 
             m_loss_avg.reset()
             duration_avg.reset()
@@ -156,12 +200,25 @@ class ForwardTrainer:
                 dur_loss = self.l1_loss(pred['dur'].unsqueeze(1), batch['dur'].unsqueeze(1), batch['x_len'])
                 pitch_loss = self.l1_loss(pred['pitch'], batch['pitch'].unsqueeze(1), batch['x_len'])
                 energy_loss = self.l1_loss(pred['energy'], batch['energy'].unsqueeze(1), batch['x_len'])
+                y_hat_mel = mel_spectrogram_torch(
+                    pred['audio'].squeeze(1), 
+                    config["dsp"]["win_length"], 
+                    config["dsp"]["num_mels"], 
+                    config["dsp"]["sample_rate"], 
+                    config["dsp"]["hop_length"], 
+                    config["dsp"]["win_length"], 
+                    config["dsp"]["fmin"], 
+                    config["dsp"]["fmax"]
+                )
+                e2e_loss = self.l1_loss(y_hat_mel, batch['wav'].unsqueeze(1), batch['wav_length'])
                 pitch_val_loss += pitch_loss
                 energy_val_loss += energy_loss
                 m_val_loss += m1_loss.item() + m2_loss.item()
                 dur_val_loss += dur_loss.item()
+                e2e_val_loss += e2e_loss.item()
         return {
             'mel_loss': m_val_loss / len(val_set),
+            'mel_e2e_loss': e2e_val_loss / len(val_set),
             'dur_loss': dur_val_loss / len(val_set),
             'pitch_loss': pitch_val_loss / len(val_set),
             'energy_loss': energy_val_loss / len(val_set)
@@ -177,10 +234,12 @@ class ForwardTrainer:
         pred = model(batch)
         m1_hat = np_now(pred['mel'])[0, :, :]
         m2_hat = np_now(pred['mel_post'])[0, :, :]
+        audio_hat = np_now(pred['audio'])[0, :, :]
         m_target = np_now(batch['mel'])[0, :, :]
 
         m1_hat_fig = plot_mel(m1_hat)
         m2_hat_fig = plot_mel(m2_hat)
+        audio_hat_fig = plot_spectrogram_to_numpy(audio_hat)
         m_target_fig = plot_mel(m_target)
         pitch_fig = plot_pitch(np_now(batch['pitch'][0]))
         pitch_gta_fig = plot_pitch(np_now(pred['pitch'].squeeze()[0]))
@@ -194,24 +253,23 @@ class ForwardTrainer:
         self.writer.add_figure('Ground_Truth_Aligned/target', m_target_fig, model.step)
         self.writer.add_figure('Ground_Truth_Aligned/linear', m1_hat_fig, model.step)
         self.writer.add_figure('Ground_Truth_Aligned/postnet', m2_hat_fig, model.step)
-
-        m2_hat_wav = self.dsp.griffinlim(m2_hat)
+        self.writer.add_figure('Ground_Truth_Aligned/audio', audio_hat_fig, model.step)
         target_wav = self.dsp.griffinlim(m_target)
 
         self.writer.add_audio(
             tag='Ground_Truth_Aligned/target_wav', snd_tensor=target_wav,
             global_step=model.step, sample_rate=self.dsp.sample_rate)
         self.writer.add_audio(
-            tag='Ground_Truth_Aligned/postnet_wav', snd_tensor=m2_hat_wav,
+            tag='Ground_Truth_Aligned/postnet_wav', snd_tensor=audio_hat,
             global_step=model.step, sample_rate=self.dsp.sample_rate)
 
         gen = model.generate(batch['x'][0:1, :batch['x_len'][0]])
         m1_hat = np_now(gen['mel'].squeeze())
         m2_hat = np_now(gen['mel_post'].squeeze())
-
+        audio_hat = np_now(gen['audio'].squeeze())
         m1_hat_fig = plot_mel(m1_hat)
         m2_hat_fig = plot_mel(m2_hat)
-
+        audio_hat_fig = plot_spectrogram_to_numpy(audio_hat)
         pitch_gen_fig = plot_pitch(np_now(gen['pitch'].squeeze()))
         energy_gen_fig = plot_pitch(np_now(gen['energy'].squeeze()))
 
@@ -220,12 +278,11 @@ class ForwardTrainer:
         self.writer.add_figure('Generated/target', m_target_fig, model.step)
         self.writer.add_figure('Generated/linear', m1_hat_fig, model.step)
         self.writer.add_figure('Generated/postnet', m2_hat_fig, model.step)
-
-        m2_hat_wav = self.dsp.griffinlim(m2_hat)
+        self.writer.add_figure('Generated/audio', audio_hat_fig, model.step)
 
         self.writer.add_audio(
             tag='Generated/target_wav', snd_tensor=target_wav,
             global_step=model.step, sample_rate=self.dsp.sample_rate)
         self.writer.add_audio(
-            tag='Generated/postnet_wav', snd_tensor=m2_hat_wav,
+            tag='Generated/postnet_wav', snd_tensor=audio_hat,
             global_step=model.step, sample_rate=self.dsp.sample_rate)

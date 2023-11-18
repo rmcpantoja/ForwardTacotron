@@ -8,6 +8,7 @@ from torch.nn import Embedding
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from models.common_layers import CBHG, LengthRegulator, BatchNormConv
+from models.hifigan import Generator
 from utils.text.symbols import phonemes
 
 
@@ -65,6 +66,13 @@ class ForwardTacotron(nn.Module):
                  postnet_k: int,
                  prenet_num_highways: int,
                  postnet_dropout: float,
+                 initial_channel: int,
+                 resblock: int,
+                 resblock_kernel_sizes: list,
+                 resblock_dilation_sizes: list,
+                 upsample_rates: list,
+                 upsample_initial_channel: int,
+                 upsample_kernel_sizes: list,
                  n_mels: int,
                  padding_value=-11.5129):
         super().__init__()
@@ -97,6 +105,13 @@ class ForwardTacotron(nn.Module):
                             rnn_dims,
                             batch_first=True,
                             bidirectional=True)
+        self.vocoder = Generator(initial_channel,
+                           resblock,
+                           resblock_kernel_sizes,
+                           resblock_dilation_sizes,
+                           upsample_rates,
+                           upsample_initial_channel,
+                           upsample_kernel_sizes)
         self.lin = torch.nn.Linear(2 * rnn_dims, n_mels)
         self.register_buffer('step', torch.zeros(1, dtype=torch.long))
         self.postnet = CBHG(K=postnet_k,
@@ -160,9 +175,9 @@ class ForwardTacotron(nn.Module):
 
         x_post = self._pad(x_post, mel.size(2))
         x = self._pad(x, mel.size(2))
-
+        audio_output = self.vocoder(x_post)
         return {'mel': x, 'mel_post': x_post,
-                'dur': dur_hat, 'pitch': pitch_hat, 'energy': energy_hat}
+                'audio': audio_output, 'dur': dur_hat, 'pitch': pitch_hat, 'energy': energy_hat}
 
     def generate(self,
                  x: torch.Tensor,
@@ -179,7 +194,7 @@ class ForwardTacotron(nn.Module):
             pitch_hat = pitch_function(pitch_hat)
             energy_hat = self.energy_pred(x).transpose(1, 2)
             energy_hat = energy_function(energy_hat)
-            return self._generate_mel(x=x, dur_hat=dur_hat,
+            return self._generate_output(x=x, dur_hat=dur_hat,
                                       pitch_hat=pitch_hat,
                                       energy_hat=energy_hat)
 
@@ -195,14 +210,14 @@ class ForwardTacotron(nn.Module):
                 torch.fill_(dur_hat, value=2.)
             pitch_hat = self.pitch_pred(x).transpose(1, 2) * beta
             energy_hat = self.energy_pred(x).transpose(1, 2)
-            return self._generate_mel(x=x, dur_hat=dur_hat,
+            return self._generate_output(x=x, dur_hat=dur_hat,
                                       pitch_hat=pitch_hat,
                                       energy_hat=energy_hat)
 
     def get_step(self) -> int:
         return self.step.data.item()
 
-    def _generate_mel(self,
+    def _generate_output(self,
                       x: torch.Tensor,
                       dur_hat: torch.Tensor,
                       pitch_hat: torch.Tensor,
@@ -229,9 +244,9 @@ class ForwardTacotron(nn.Module):
         x_post = self.postnet(x)
         x_post = self.post_proj(x_post)
         x_post = x_post.transpose(1, 2)
-
+        audio_output = self.vocoder(x_post)
         return {'mel': x, 'mel_post': x_post, 'dur': dur_hat,
-                'pitch': pitch_hat, 'energy': energy_hat}
+                'audio': audio_output, 'pitch': pitch_hat, 'energy': energy_hat}
 
     def _pad(self, x: torch.Tensor, max_len: int) -> torch.Tensor:
         x = x[:, :, :max_len]

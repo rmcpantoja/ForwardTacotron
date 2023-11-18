@@ -12,6 +12,7 @@ from tabulate import tabulate
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import Sampler
 
+#from utils.dsp import *
 from utils.files import unpickle_binary
 from utils.paths import Paths
 from utils.text.tokenizer import Tokenizer
@@ -143,9 +144,13 @@ class ForwardDataset(Dataset):
         pitch_cond = np.ones(pitch.shape)
         pitch_cond[pitch != 0] = 2
 
+        # end-2-end
+        wav = torch.load(str(self.paths.audio/f'{item_id}.pt'))
+        wav_length = wav.size(1)
         return {'x': x, 'mel': mel, 'item_id': item_id, 'x_len': len(x),
                 'mel_len': mel_len, 'dur': dur, 'pitch': pitch, 'energy': energy,
-                'speaker_emb': speaker_emb, 'pitch_cond': pitch_cond, 'speaker_name': speaker_name}
+                'speaker_emb': speaker_emb, 'pitch_cond': pitch_cond, 'speaker_name': speaker_name,
+                'wav': wav, 'wav_length': wav_length}
 
     def __len__(self):
         return len(self.metadata)
@@ -256,11 +261,14 @@ class ForwardCollator:
         energy = _stack_to_tensor(energy).float()
         pitch_cond = [_pad1d(b['pitch_cond'][:max_x_len], max_x_len) for b in batch]
         pitch_cond = _stack_to_tensor(pitch_cond).long()
+        wav = [b['wav'] for b in batch]
+        #wav = _stack_to_tensor(wav).float()
         output.update({
             'pitch': pitch,
             'energy': energy,
             'dur': dur,
-            'pitch_cond': pitch_cond
+            'pitch_cond': pitch_cond,
+            'wav': wav
         })
         return output
 
@@ -491,7 +499,7 @@ class PreprocessingDataPoint:
     pitch: np.array
     reference_wav: np.array
     processed_wav: np.array
-
+    audio: np.array
 
 class PreprocessingDataset(Dataset):
     """Dataset used for preprocessing"""
