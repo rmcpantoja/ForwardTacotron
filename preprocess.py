@@ -75,7 +75,7 @@ class PreprocessingBatchCollator:
                 if self.dsp.should_peak_norm or peak > 1.0:
                     y /= peak
                     y = y * 0.95
-                audio = spectrogram_torch(audio_norm, self.dsp.win_length,
+                audio = spectrogram_torch(y, self.dsp.win_length,
                     self.dsp.sample_rate, self.dsp.hop_length, self.dsp.win_length,
                     center=False)
                 audio = torch.squeeze(audio, 0)
@@ -198,7 +198,8 @@ if __name__ == '__main__':
                     mel = tensor_to_ndarray(mels[index])
                     np.save(paths.mel / f'{dp.item_id}.npy', mel, allow_pickle=False)
                     np.save(paths.raw_pitch / f'{dp.item_id}.npy', dp.pitch, allow_pickle=False)
-                    torch.save(dp.audio, paths.audio/f'{dp.item_id}.pt')
+                    speck_path = paths.audio / f'{dp.item_id}.pt'
+                    torch.save(dp.audio, speck_path)
                     emb = voice_encoder.embed_utterance(dp.reference_wav)
                     np.save(paths.speaker_emb / f'{dp.item_id}.npy', emb, allow_pickle=False)
 
