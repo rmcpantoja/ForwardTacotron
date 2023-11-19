@@ -1,4 +1,29 @@
-# ⏩ ForwardTacotron
+# ⏩ ForwardTacotron (next gen end-to-end TTS version, WIP)
+
+inspired by [The fine-tune End-To-End experiment](https://github.com/as-ideas/ForwardTacotron/tree/experiments/end-to-end), [HiFi-GAN](https://github.com/jik876/hifi-gan) and [GlowTTS+HiFi-GAN](https://github.com/jaywalnut310/vits).
+
+This version uses a vocoder embedded in the ForwardTacotron synthesizer, ensuring end-to-end speech synthesis in a single trained model. Additionally, thanks to pitch and energy prediction, this will help provide quality results during synthesis.
+
+## Notes:
+
+* At the moment, The model has a high capacity for the vocoder, which is now built in 31m parameters, unlike ForwardTacotron (24m parameters), which can guarantee high quality results, although with greater latency. It is expected that HiFi-GAN v2 and HiFi-GAN v3 can also be efficient.
+
+# Todo
+
+- We habe an old Tacotron checkpoint for duration extraction, so we need to retrain it with the latest august 30 update. We habe:
+	- LJSpeech for English
+	- Ryan Speech as well
+	- HiFi-Captain is a nice dataset too
+	- Tomás Urive Xifra for Spanish (training ATM)
+	- Try VCTK (original 48KHZ) for multi-ForwardTacotron version
+- Comparison of results and check similarity with ground truth.
+- Re-read the dataloaders code to give importance to the lengths of the wav specs and make it padded these if necessary.
+- Review this preprocess.py: Is `paths.audio` specs really correct?
+- Make end-to-end TTS for multi-ForwardTacotron. For this, it can add the embed_g creation part to hifigan.generator if necessary.
+- When I have a model working well, try make a torchjit model and make exportable to ONNX.
+	- Research an alternative to pad_padded_sequence. That's not supported with the latest opset and torch.onnx.export.
+
+# Original readme:
 
 Inspired by Microsoft's [FastSpeech](https://www.microsoft.com/en-us/research/blog/fastspeech-new-text-to-speech-model-improves-on-speed-accuracy-and-controllability/)
 we modified Tacotron (Fork from fatchord's [WaveRNN](https://github.com/fatchord/WaveRNN)) to generate speech in a single forward pass using a duration predictor to align text and generated mel spectrograms. Hence, we call the model ForwardTacotron (see Figure 1).
