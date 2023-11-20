@@ -71,7 +71,7 @@ if __name__ == '__main__':
             dtype=np.float32,
         )
         speaker_name = args.speaker if args.speaker is not None else 'default_speaker'
-        wav_name = "test"
+        wav_name = f"test{i}"
         m = checkpoint.run(
             None,
             {
