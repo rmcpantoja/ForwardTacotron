@@ -6,8 +6,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import LayerNorm, MultiheadAttention
-from torch.nn.utils.rnn import pad_sequence
+#from torch.nn.utils.rnn import pad_sequence
 
+class CustomPadSequence(nn.Module):
+    def __init__(self, padding_value=0.):
+        super().__init__()
+        self.padding_value = padding_value
+
+    def forward(self, sequences):
+        # Find the maximum length in the sequences
+        max_length = max(len(seq) for seq in sequences)
+
+        # Pad sequences with the specified padding value
+        padded_sequences = [F.pad(seq, (0, max_length - len(seq)), value=self.padding_value) for seq in sequences]
+
+        # Stack the padded sequences
+        padded_sequences = torch.stack(padded_sequences, dim=0)
+
+        return padded_sequences
 
 class LengthRegulator(nn.Module):
 
@@ -20,7 +36,8 @@ class LengthRegulator(nn.Module):
         for i in range(x.size(0)):
             x_exp = torch.repeat_interleave(x[i], (dur[i] + 0.5).long(), dim=0)
             x_expanded.append(x_exp)
-        x_expanded = pad_sequence(x_expanded, padding_value=0., batch_first=True)
+        custom_pad_sequence = CustomPadSequence(padding_value=0.)
+        x_expanded = custom_pad_sequence(x_expanded)
         return x_expanded
 
 

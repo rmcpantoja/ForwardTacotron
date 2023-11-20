@@ -1,6 +1,7 @@
 import torch
 from models.forward_tacotron import ForwardTacotron
 #from models.fast_pitch import FastPitch
+from utils.text.symbols import phonemes
 from typing import Optional
 
 tts_model = ForwardTacotron.from_checkpoint('C:/Users/LENOVO_User/Documents/ForwardTacotron-NVDA/addon/synthDrivers/Forward/server/forward_step90k.pt')
@@ -11,26 +12,29 @@ SEED = 1234
 torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 
-def custom_generate(inputs):
-    x, alpha, pitch, energy = inputs
+def custom_generate(text, synth_options):
+    alpha = synth_options[0]
+    pitch = synth_options[1]
+    energy = synth_options[2]
     pitch_function = lambda x: x * pitch
     energy_function = lambda x: x * energy
-    infer = tts_model.generate(x, alpha=alpha, pitch_function=pitch_function, energy_function=energy_function)
+    infer = tts_model.generate(
+        text,
+        alpha=alpha,
+        pitch_function=pitch_function,
+        energy_function=energy_function
+    )
     mel = infer['mel_post']
     return mel
 
 tts_model.forward = custom_generate
 dummy_input_length = 50
-x = torch.randint(low=0, high=50, size=(1, dummy_input_length), dtype=torch.long)
-alpha: Optional[torch.Tensor] = 1.0
-pitch: Optional[torch.Tensor] = 1.0
-energy: Optional[torch.Tensor] = 1.0
-model_inputs = [x, alpha, pitch, energy]
+rand = torch.randint(low=0, high=len(phonemes), size=(1, dummy_input_length), dtype=torch.long)
+synth_inputs = torch.FloatTensor([1.0, 1.0, 1.0])
+model_inputs = (rand, synth_inputs)
 input_names = [
-    "x",
-    "alpha",
-    "pitch",
-    "energy"
+    "input",
+    "synth_options"
 ]
 
 torch.onnx.export(
@@ -41,7 +45,7 @@ torch.onnx.export(
     input_names=input_names,
     output_names=['output'],
     dynamic_axes = {
-        "x": {0: "batch_size", 1: "text"},
+        "input": {0: "batch_size", 1: "text"},
         "output": {0: "batch_size", 1: "time"}
     }
 )
