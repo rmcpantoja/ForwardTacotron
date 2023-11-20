@@ -126,34 +126,32 @@ forward_tacotron:
     prenet_dropout: 0.5
     prenet_num_highways: 4
 
-    rnn_dims: 512
+    rnn_dims: 256
 
     postnet_dims: 256
     postnet_k: 8
     postnet_num_highways: 4
     postnet_dropout: 0.
 
-    initial_channel: 192
-    resblock: 1
+    initial_channel: 80
+    resblock: 2
     upsample_rates:
       - 8
       - 8
-      - 2
-      - 2
+      - 4
     upsample_kernel_sizes:
       - 16
       - 16
-      - 4
-      - 4
-    upsample_initial_channel: 512
+      - 8
+    upsample_initial_channel: 256
     resblock_kernel_sizes:
       - 3
+      - 5
       - 7
-      - 11
     resblock_dilation_sizes:
-      - [1, 3, 5]
-      - [1, 3, 5]
-      - [1, 3, 5]
+      - [1, 2]
+      - [2, 6]
+      - [3, 12]
 
   training:
     schedule:
