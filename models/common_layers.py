@@ -36,9 +36,24 @@ class LengthRegulator(nn.Module):
         for i in range(x.size(0)):
             x_exp = torch.repeat_interleave(x[i], (dur[i] + 0.5).long(), dim=0)
             x_expanded.append(x_exp)
-        custom_pad_sequence = CustomPadSequence(padding_value=0.)
-        x_expanded = custom_pad_sequence(x_expanded)
+        x_expanded = pad_sequence(x_expanded, padding_value=0., batch_first=True)
         return x_expanded
+
+class LengthRegulator_onnx(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: torch.Tensor, dur: torch.Tensor) -> torch.Tensor:
+        dur[dur < 0] = 0.
+        x_expanded = []
+        for i in range(x.size(0)):
+            x_exp = torch.repeat_interleave(x[i], (dur[i] + 0.5).long(), dim=0)
+            x_expanded.append(x_exp)
+        customPadSequence = CustomPadSequence(padding_value=0.)
+        x_expanded = customPadSequence(x_expanded)
+        return x_expanded
+
 
 
 class HighwayNetwork(nn.Module):
