@@ -13,9 +13,8 @@ if __name__ == '__main__':
 
     # Parse Arguments
     parser = argparse.ArgumentParser(description='TTS Generator')
-    parser.add_argument('--checkpoint', type=str, default=None, help='[string/path] path to .pt model file.')
-    parser.add_argument('--config', metavar='FILE', default='default.yaml', help='The config containing all hyperparams. Only'
-                                                                                'used if no checkpoint is set.')
+    parser.add_argument('--checkpoint', type=str, default=None, help='[string/path] path to .onnx model file.')
+    parser.add_argument('--config', metavar='FILE', default='default.yaml', help='The config containing all hyperparams.')
     parser.add_argument('--speaker', type=str, default=None, help='Speaker to generate audio for (only multispeaker).')
 
     args = parser.parse_args()
@@ -32,7 +31,7 @@ if __name__ == '__main__':
     cleaner = Cleaner.from_config(config)
     tokenizer = Tokenizer()
 
-    with open('sentences_es.txt', 'r', encoding='utf-8') as f:
+    with open('sentences.txt', 'r', encoding='utf-8') as f:
         texts = f.readlines()
     for i, x in enumerate(texts, 1):
         print(f'\n| Generating {i}/{len(texts)}')

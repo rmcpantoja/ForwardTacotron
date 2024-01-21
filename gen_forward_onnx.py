@@ -16,8 +16,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='TTS Generator')
     parser.add_argument('--input_text', '-i', default=None, type=str, help='[string] Type in something here and TTS will generate it!')
     parser.add_argument('--checkpoint', type=str, default=None, help='[string/path] path to .pt model file.')
-    parser.add_argument('--config', metavar='FILE', default='default.yaml', help='The config containing all hyperparams. Only'
-                                                                                'used if no checkpoint is set.')
+    parser.add_argument('--config', metavar='FILE', default='default.yaml', help='The config containing all hyperparams.')
     parser.add_argument('--speaker', type=str, default=None, help='Speaker to generate audio for (only multispeaker).')
 
     parser.add_argument('--alpha', type=float, default=1., help='Parameter for controlling length regulator for speedup '
