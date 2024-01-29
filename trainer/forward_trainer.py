@@ -58,9 +58,9 @@ class ForwardTrainer:
         simple_table([(f'Steps', str(training_steps // 1000) + 'k Steps'),
                       ('Batch Size', session.bs),
                       ('Learning Rate', session.lr)])
-        optim_g, optim_d = optims
+        optim_g, optim_d = optimizers
         scheduler_g, scheduler_d = schedulers
-        for g in optimizer.param_groups:
+        for g in optim_g.param_groups:
             g['lr'] = session.lr
 
         m_loss_avg = Averager()
@@ -86,15 +86,15 @@ class ForwardTrainer:
                 pred['audio'] =                 pred['audio'].float()
                 hat_mel = mel_spectrogram_torch(
                     pred['audio'].squeeze(1), 
-                    config["dsp"]["win_length"], 
-                    config["dsp"]["num_mels"], 
-                    config["dsp"]["sample_rate"], 
-                    config["dsp"]["hop_length"], 
-                    config["dsp"]["win_length"], 
-                    config["dsp"]["fmin"], 
-                    config["dsp"]["fmax"]
+                    self.config["dsp"]["win_length"], 
+                    self.config["dsp"]["num_mels"], 
+                    self.config["dsp"]["sample_rate"], 
+                    self.config["dsp"]["hop_length"], 
+                    self.config["dsp"]["win_length"], 
+                    self.config["dsp"]["fmin"], 
+                    self.config["dsp"]["fmax"]
                 )
-                y_d_hat_r, y_d_hat_g, _, _ = disc(batch['wav'], y_hat.detach())
+                y_d_hat_r, y_d_hat_g, _, _ = disc(batch['wav'], pred['audio'].detach())
                 with autocast(enabled=False):
                     loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(y_d_hat_r, y_d_hat_g)
                     loss_disc_all = loss_disc
@@ -202,13 +202,13 @@ class ForwardTrainer:
                 energy_loss = self.l1_loss(pred['energy'], batch['energy'].unsqueeze(1), batch['x_len'])
                 y_hat_mel = mel_spectrogram_torch(
                     pred['audio'].squeeze(1), 
-                    config["dsp"]["win_length"], 
-                    config["dsp"]["num_mels"], 
-                    config["dsp"]["sample_rate"], 
-                    config["dsp"]["hop_length"], 
-                    config["dsp"]["win_length"], 
-                    config["dsp"]["fmin"], 
-                    config["dsp"]["fmax"]
+                    self.config["dsp"]["win_length"], 
+                    self.config["dsp"]["num_mels"], 
+                    self.config["dsp"]["sample_rate"], 
+                    self.config["dsp"]["hop_length"], 
+                    self.config["dsp"]["win_length"], 
+                    self.config["dsp"]["fmin"], 
+                    self.config["dsp"]["fmax"]
                 )
                 e2e_loss = self.l1_loss(y_hat_mel, batch['wav'].unsqueeze(1), batch['wav_length'])
                 pitch_val_loss += pitch_loss
